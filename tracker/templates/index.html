@@ -1,0 +1,295 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Reading Tracker</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface-1:      #fcfcfb;
+    --page-plane:     #f9f9f7;
+    --text-primary:   #0b0b0b;
+    --text-secondary: #52514e;
+    --text-muted:     #898781;
+    --gridline:       #e1e0d9;
+    --baseline:       #c3c2b7;
+    --series-1:       #2a78d6;
+    --border:         rgba(11, 11, 11, 0.10);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      color-scheme: dark;
+      --surface-1:      #1a1a19;
+      --page-plane:     #0d0d0d;
+      --text-primary:   #ffffff;
+      --text-secondary: #c3c2b7;
+      --text-muted:     #898781;
+      --gridline:       #2c2c2a;
+      --baseline:       #383835;
+      --series-1:       #3987e5;
+      --border:         rgba(255, 255, 255, 0.10);
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    padding: 24px 16px 48px;
+    background: var(--page-plane);
+    color: var(--text-primary);
+    font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  }
+  .wrap { max-width: 840px; margin: 0 auto; }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--text-secondary);
+    font-size: 14px;
+    margin: 0 0 24px;
+  }
+
+  .card {
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+    margin-bottom: 20px;
+  }
+
+  .stat-row {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+  .stat-tile {
+    flex: 1 1 160px;
+    background: var(--surface-1);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+  }
+  .stat-label {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin: 0 0 6px;
+  }
+  .stat-value {
+    font-size: 32px;
+    font-weight: 600;
+    line-height: 1;
+  }
+
+  .chart-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin: 0 0 16px;
+  }
+
+  #chart-svg { width: 100%; height: 220px; display: block; overflow: visible; }
+  .bar { fill: var(--series-1); }
+  .bar:hover { opacity: 0.85; }
+  .gridline { stroke: var(--gridline); stroke-width: 1; }
+  .baseline { stroke: var(--baseline); stroke-width: 1; }
+  .axis-label { fill: var(--text-muted); font-size: 10px; }
+
+  #tooltip {
+    position: fixed;
+    pointer-events: none;
+    background: var(--text-primary);
+    color: var(--page-plane);
+    font-size: 12px;
+    padding: 6px 10px;
+    border-radius: 6px;
+    opacity: 0;
+    transition: opacity 0.1s;
+    z-index: 10;
+    white-space: nowrap;
+  }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th {
+    text-align: left;
+    color: var(--text-muted);
+    font-weight: 500;
+    font-size: 12px;
+    padding: 6px 10px;
+    border-bottom: 1px solid var(--gridline);
+  }
+  td {
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--gridline);
+    color: var(--text-primary);
+  }
+  td.muted { color: var(--text-secondary); }
+  .num { font-variant-numeric: tabular-nums; text-align: right; }
+  .empty-note { color: var(--text-secondary); font-size: 13px; padding: 8px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Reading Tracker</h1>
+  <p class="subtitle">Pages read from your Google Books "Reading now" shelf, checked every few minutes.</p>
+
+  <div class="stat-row">
+    <div class="stat-tile">
+      <p class="stat-label">Pages today</p>
+      <div class="stat-value" id="stat-today">–</div>
+    </div>
+    <div class="stat-tile">
+      <p class="stat-label">Pages this week</p>
+      <div class="stat-value" id="stat-week">–</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <p class="chart-title">Pages read per day (last 30 days)</p>
+    <svg id="chart-svg" viewBox="0 0 780 220" preserveAspectRatio="none"></svg>
+  </div>
+
+  <div class="card">
+    <p class="chart-title">Recent activity</p>
+    <div id="recent-table"></div>
+  </div>
+</div>
+
+<div id="tooltip"></div>
+
+<script>
+const tooltip = document.getElementById('tooltip');
+
+function showTooltip(evt, text) {
+  tooltip.textContent = text;
+  tooltip.style.left = (evt.clientX + 12) + 'px';
+  tooltip.style.top = (evt.clientY + 12) + 'px';
+  tooltip.style.opacity = 1;
+}
+function hideTooltip() {
+  tooltip.style.opacity = 0;
+}
+
+function niceMax(value) {
+  if (value <= 0) return 10;
+  const magnitude = Math.pow(10, Math.floor(Math.log10(value)));
+  const normalized = value / magnitude;
+  let step;
+  if (normalized <= 1) step = 1;
+  else if (normalized <= 2) step = 2;
+  else if (normalized <= 5) step = 5;
+  else step = 10;
+  return step * magnitude;
+}
+
+function renderChart(daily) {
+  const svg = document.getElementById('chart-svg');
+  const W = 780, H = 220;
+  const padLeft = 34, padRight = 4, padTop = 8, padBottom = 24;
+  const plotW = W - padLeft - padRight;
+  const plotH = H - padTop - padBottom;
+
+  const maxPages = niceMax(Math.max(...daily.map(d => d.pages), 1));
+  const n = daily.length;
+  const slot = plotW / n;
+  const barWidth = Math.min(24, slot - 2); // 2px surface gap between bars, capped thickness
+
+  const yTicks = [0, maxPages / 2, maxPages];
+
+  let svgParts = [];
+
+  // gridlines + y-axis labels
+  yTicks.forEach(t => {
+    const y = padTop + plotH - (t / maxPages) * plotH;
+    svgParts.push(`<line class="gridline" x1="${padLeft}" y1="${y}" x2="${W - padRight}" y2="${y}" />`);
+    svgParts.push(`<text class="axis-label" x="${padLeft - 6}" y="${y + 3}" text-anchor="end">${Math.round(t)}</text>`);
+  });
+
+  // baseline
+  const baseY = padTop + plotH;
+  svgParts.push(`<line class="baseline" x1="${padLeft}" y1="${baseY}" x2="${W - padRight}" y2="${baseY}" />`);
+
+  // bars
+  daily.forEach((d, i) => {
+    const barHeight = maxPages > 0 ? (d.pages / maxPages) * plotH : 0;
+    const x = padLeft + i * slot + (slot - barWidth) / 2;
+    const y = baseY - barHeight;
+    const r = barHeight > 4 ? 4 : 0;
+    svgParts.push(
+      `<rect class="bar" data-date="${d.date}" data-pages="${d.pages}" ` +
+      `x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${barWidth.toFixed(1)}" height="${Math.max(barHeight, 0).toFixed(1)}" rx="${r}" ry="${r}" />`
+    );
+    // x-axis label every 5th day to avoid crowding
+    if (i % 5 === 0 || i === n - 1) {
+      const label = d.date.slice(5); // MM-DD
+      svgParts.push(`<text class="axis-label" x="${(x + barWidth / 2).toFixed(1)}" y="${H - 6}" text-anchor="middle">${label}</text>`);
+    }
+  });
+
+  svg.innerHTML = svgParts.join('');
+
+  svg.querySelectorAll('.bar').forEach(bar => {
+    bar.addEventListener('mousemove', (evt) => {
+      showTooltip(evt, `${bar.dataset.date}: ${bar.dataset.pages} pages`);
+    });
+    bar.addEventListener('mouseleave', hideTooltip);
+  });
+}
+
+function renderStats(daily) {
+  const today = daily[daily.length - 1];
+  const week = daily.slice(-7).reduce((sum, d) => sum + d.pages, 0);
+  document.getElementById('stat-today').textContent = today ? today.pages : 0;
+  document.getElementById('stat-week').textContent = week;
+}
+
+function fmtTs(ts) {
+  try {
+    const d = new Date(ts);
+    return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+  } catch (e) {
+    return ts;
+  }
+}
+
+function renderRecent(rows) {
+  const container = document.getElementById('recent-table');
+  if (!rows.length) {
+    container.innerHTML = '<p class="empty-note">No reading activity logged yet. Keep reading in Google Play Books — this updates automatically.</p>';
+    return;
+  }
+  let html = '<table><thead><tr><th>When</th><th>Book</th><th class="num">Pages</th><th>Note</th></tr></thead><tbody>';
+  for (const row of rows) {
+    const delta = row.pages_delta;
+    const deltaText = delta === 0 ? '–' : (delta > 0 ? '+' + delta : String(delta));
+    const note = row.note ? row.note : (row.confidence === 'estimated' ? 'estimated' : '');
+    html += `<tr><td class="muted">${fmtTs(row.ts)}</td><td>${row.title}</td><td class="num">${deltaText}</td><td class="muted">${note}</td></tr>`;
+  }
+  html += '</tbody></table>';
+  container.innerHTML = html;
+}
+
+async function refresh() {
+  try {
+    const [dailyResp, recentResp] = await Promise.all([
+      fetch('/api/daily'),
+      fetch('/api/recent'),
+    ]);
+    const daily = await dailyResp.json();
+    const recent = await recentResp.json();
+    renderChart(daily);
+    renderStats(daily);
+    renderRecent(recent);
+  } catch (e) {
+    console.error('failed to refresh dashboard', e);
+  }
+}
+
+refresh();
+setInterval(refresh, 60000);
+</script>
+</body>
+</html>

@@ -1,0 +1,15 @@
+services:
+  reading-tracker:
+    build: .
+    image: google-books-reading-tracker:latest
+    restart: unless-stopped
+    environment:
+      - POLL_INTERVAL_SECONDS=${POLL_INTERVAL_SECONDS:-300}
+      - WEB_PORT=${WEB_PORT:-8080}
+      - TOKEN_PATH=/secrets/token.json
+      - DATA_DIR=/data
+    ports:
+      - "${WEB_PORT:-8080}:8080"
+    volumes:
+      - ./secrets/token.json:/secrets/token.json:ro
+      - ./data:/data
