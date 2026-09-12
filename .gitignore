@@ -1,0 +1,19 @@
+# secrets — never commit OAuth credentials or tokens
+secrets/
+**/token.json
+**/client_secret*.json
+
+# runtime data (flat-file log + state)
+data/*
+!data/.gitkeep
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# env
+.env
